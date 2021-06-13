@@ -1,0 +1,90 @@
+variables:
+    REGISTRY_URL: $AWS_ECR_URL
+    REGISTRY_IMAGE: $REGISTRY_URL/$CI_PROJECT_NAME
+    VERSION_DEV: $CI_COMMIT_REF_NAME-$CI_PIPELINE_ID-$CI_COMMIT_SHORT_SHA
+    VERSION_PRODUCTION: $CI_COMMIT_REF_NAME-$CI_PIPELINE_ID
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    AWS_DEFAULT_REGION: ap-southeast-1
+
+stages:
+  - build-development
+  - build-production
+  - deploy-development
+  - deploy-production
+  
+build-development:
+  stage: build-development
+  image: docker:latest
+  only:
+    - development
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache curl jq python3 py3-pip
+    - pip install awscli
+    - aws --version
+    - aws configure set aws_access_key_id "${AWS_ACCESS_KEY}"
+    - aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}"
+    - eval $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION | sed 's;https://;;g')
+    - docker info
+    - docker --version
+  script:
+    - docker build -t $REGISTRY_IMAGE:$VERSION_DEV .
+    - docker push $REGISTRY_IMAGE:$VERSION_DEV
+
+
+build-production:
+  stage: build-production
+  image: docker:latest
+  only:
+    - master
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache curl jq python3 py3-pip
+    - pip install awscli
+    - aws --version
+    - aws configure set aws_access_key_id "${AWS_ACCESS_}"
+    - aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}"
+    - eval $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION | sed 's;https://;;g')
+    - docker info
+    - docker --version
+  script:
+    - docker build -t $REGISTRY_IMAGE:$VERSION_PRODUCTION .
+    - docker push $REGISTRY_IMAGE:$VERSION_PRODUCTION
+
+    
+Deploy-development:
+  stage: deploy-development
+  image: ubuntu:latest
+  only:
+    - development
+  before_script:
+    - 'command -v ssh-agent >/dev/null || ( apt-get update -y && apt-get install openssh-client -y )'
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY_DEV" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+  script:
+    - ssh $DEVELOPMENT_SERVER_USERNAME@DEVELOPMENT_SERVER_IP 'docker stop $CI_PROJECT_NAME'
+    - ssh $DEVELOPMENT_SERVER_USERNAME@DEVELOPMENT_SERVER_IP 'docker rm $namadocker'
+    - ssh $DEVELOPMENT_SERVER_USERNAME@DEVELOPMENT_SERVER_IP ''docker run --name $CI_PROJECT_NAME -p $PORT $REGISTRY_IMAGE'
+
+Deploy-production:
+  stage: deploy-production
+  image: ubuntu:latest
+  only:
+    - master
+  before_script:
+    - 'command -v ssh-agent >/dev/null || ( apt-get update -y && apt-get install openssh-client -y )'
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY_PROD" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+  script:
+    - ssh $PRODUCTION_SERVER_USERNAME@PRODUCTION_SERVER_IP 'docker stop $CI_PROJECT_NAME'
+    - ssh $PRODUCTION_SERVER_USERNAME@PRODUCTION_SERVER_IP 'docker rm $namadocker'
+    - ssh $PRODUCTION_SERVER_USERNAME@PRODUCTION_SERVER_IP ''docker run --name $CI_PROJECT_NAME -p $PORT $REGISTRY_IMAGE'
+
